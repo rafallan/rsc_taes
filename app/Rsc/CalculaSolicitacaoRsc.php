@@ -94,7 +94,8 @@ class CalculaSolicitacaoRsc
             'variacao_pontuacao_id' => $variacao?->id,
             'pontos_unitarios' => $pontosUnitarios,
             'pontos_calculados' => round($quantidade * $pontosUnitarios, 2),
-            'tem_documentos' => is_countable($atividade['documentos'] ?? null) && count($atividade['documentos']) > 0,
+            'tem_documentos' => (is_countable($atividade['documentos'] ?? null) && count($atividade['documentos']) > 0)
+                || (int) ($atividade['documentos_existentes_count'] ?? 0) > 0,
         ];
     }
 

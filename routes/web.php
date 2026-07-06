@@ -14,7 +14,7 @@ Route::middleware(['auth', 'verified'])->group(function () {
         Route::put('perfil', [RscProfileController::class, 'update'])->name('profile.update');
         Route::resource('solicitacoes', SolicitacaoRscController::class)
             ->parameters(['solicitacoes' => 'solicitacao'])
-            ->only(['index', 'create', 'store', 'show']);
+            ->only(['index', 'create', 'store', 'show', 'edit', 'update']);
     });
 });
 

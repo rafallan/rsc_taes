@@ -5,6 +5,7 @@ use App\Models\Escolaridade;
 use App\Models\NivelRsc;
 use App\Models\Servidor;
 use App\Models\SolicitacaoRsc;
+use App\Models\SolicitacaoRscCriterio;
 use App\Models\User;
 use App\Rsc\SolicitacaoRscStatus;
 use Database\Seeders\RscSeeder;
@@ -103,6 +104,136 @@ test('valid request can be submitted with calculated score', function () {
         ->and($solicitacao->criterios()->count())->toBe(2);
 });
 
+test('draft request can be edited and submitted later', function () {
+    $this->seed(RscSeeder::class);
+    Storage::fake('local');
+
+    $user = User::factory()->create();
+    servidorFor($user, 'Mestrado');
+    $nivel = NivelRsc::query()->where('codigo', 'RSC-VI')->firstOrFail();
+    $criterio = CriterioRsc::query()->whereRelation('requisito', 'numero', 1)->firstOrFail();
+
+    $this->actingAs($user)
+        ->post(route('rsc.solicitacoes.store'), [
+            'nivel_rsc_id' => $nivel->id,
+            'intent' => 'draft',
+            'saldo_pontos_anterior' => 0,
+            'memorial' => 'Memorial em elaboração.',
+            'declaracao_veracidade' => true,
+            'declaracao_nao_reutilizacao' => true,
+            'atividades' => [
+                validAtividade($criterio->id, 1, 'comissao.pdf'),
+            ],
+        ])
+        ->assertRedirect();
+
+    $solicitacao = SolicitacaoRsc::query()->firstOrFail();
+
+    $this->actingAs($user)
+        ->get(route('rsc.solicitacoes.edit', $solicitacao))
+        ->assertSuccessful();
+
+    $criterios = CriterioRsc::query()->whereRelation('requisito', 'numero', 6)->orderByDesc('pontos')->take(7)->get();
+
+    $this->actingAs($user)
+        ->put(route('rsc.solicitacoes.update', $solicitacao), [
+            'nivel_rsc_id' => $nivel->id,
+            'intent' => 'submit',
+            'saldo_pontos_anterior' => 0,
+            'memorial' => 'Memorial profissional concluído.',
+            'declaracao_veracidade' => true,
+            'declaracao_nao_reutilizacao' => true,
+            'atividades' => $criterios
+                ->values()
+                ->map(fn (CriterioRsc $criterio, int $index): array => validAtividade($criterio->id, 1, "requisito-vi-{$index}.pdf"))
+                ->all(),
+        ])
+        ->assertRedirect(route('rsc.solicitacoes.show', $solicitacao));
+
+    $solicitacao->refresh();
+
+    expect($solicitacao->status)->toBe(SolicitacaoRscStatus::Submetida)
+        ->and((float) $solicitacao->pontos_declarados)->toBeGreaterThanOrEqual(75.0)
+        ->and($solicitacao->criterios()->count())->toBe(7);
+});
+
+test('draft keeps existing documents when submitted from edit form', function () {
+    $this->seed(RscSeeder::class);
+    Storage::fake('local');
+
+    $user = User::factory()->create();
+    servidorFor($user, 'Ensino Médio/Técnico');
+    $nivel = NivelRsc::query()->where('codigo', 'RSC-III')->firstOrFail();
+    $criterios = CriterioRsc::query()->whereRelation('requisito', 'numero', 3)->orderBy('item')->take(2)->get();
+
+    $this->actingAs($user)
+        ->post(route('rsc.solicitacoes.store'), [
+            'nivel_rsc_id' => $nivel->id,
+            'intent' => 'draft',
+            'saldo_pontos_anterior' => 0,
+            'memorial' => 'Trajetória profissional com atuação institucional relevante.',
+            'declaracao_veracidade' => true,
+            'declaracao_nao_reutilizacao' => true,
+            'atividades' => [
+                validAtividade($criterios[0]->id, 1, 'premio-internacional.pdf'),
+                validAtividade($criterios[1]->id, 1, 'premio-nacional.pdf'),
+            ],
+        ])
+        ->assertRedirect();
+
+    $solicitacao = SolicitacaoRsc::query()->with('criterios.documentos')->firstOrFail();
+    $atividades = $solicitacao->criterios->map(fn ($item): array => atividadeSemNovoDocumento($item))->all();
+
+    $this->actingAs($user)
+        ->put(route('rsc.solicitacoes.update', $solicitacao), [
+            'nivel_rsc_id' => $nivel->id,
+            'intent' => 'submit',
+            'saldo_pontos_anterior' => 0,
+            'memorial' => 'Trajetória profissional com atuação institucional relevante.',
+            'declaracao_veracidade' => true,
+            'declaracao_nao_reutilizacao' => true,
+            'atividades' => $atividades,
+        ])
+        ->assertRedirect(route('rsc.solicitacoes.show', $solicitacao));
+
+    $solicitacao->refresh();
+
+    expect($solicitacao->status)->toBe(SolicitacaoRscStatus::Submetida)
+        ->and($solicitacao->criterios()->count())->toBe(2)
+        ->and($solicitacao->criterios()->withCount('documentos')->get()->sum('documentos_count'))->toBe(2);
+});
+
+test('submitted request cannot be edited', function () {
+    $this->seed(RscSeeder::class);
+    Storage::fake('local');
+
+    $user = User::factory()->create();
+    servidorFor($user, 'Ensino Médio/Técnico');
+    $nivel = NivelRsc::query()->where('codigo', 'RSC-III')->firstOrFail();
+    $criterios = CriterioRsc::query()->whereRelation('requisito', 'numero', 3)->orderBy('item')->take(2)->get();
+
+    $this->actingAs($user)
+        ->post(route('rsc.solicitacoes.store'), [
+            'nivel_rsc_id' => $nivel->id,
+            'intent' => 'submit',
+            'saldo_pontos_anterior' => 0,
+            'memorial' => 'Trajetória profissional com atuação institucional relevante.',
+            'declaracao_veracidade' => true,
+            'declaracao_nao_reutilizacao' => true,
+            'atividades' => [
+                validAtividade($criterios[0]->id, 1, 'premio-internacional.pdf'),
+                validAtividade($criterios[1]->id, 1, 'premio-nacional.pdf'),
+            ],
+        ])
+        ->assertRedirect();
+
+    $solicitacao = SolicitacaoRsc::query()->firstOrFail();
+
+    $this->actingAs($user)
+        ->get(route('rsc.solicitacoes.edit', $solicitacao))
+        ->assertForbidden();
+});
+
 function servidorFor(User $user, string $escolaridadeNome): Servidor
 {
     $escolaridade = Escolaridade::query()->where('nome', $escolaridadeNome)->firstOrFail();
@@ -140,5 +271,29 @@ function validAtividade(int $criterioId, int $quantidade, string $filename): arr
         'documentos' => [
             UploadedFile::fake()->create($filename, 100, 'application/pdf'),
         ],
+    ];
+}
+
+/**
+ * @return array<string, mixed>
+ */
+function atividadeSemNovoDocumento(SolicitacaoRscCriterio $item): array
+{
+    return [
+        'id' => $item->id,
+        'criterio_rsc_id' => $item->criterio_rsc_id,
+        'variacao_pontuacao_id' => $item->variacao_pontuacao_id,
+        'titulo_atividade' => $item->titulo_atividade,
+        'descricao_atividade' => $item->descricao_atividade,
+        'data_inicio' => $item->data_inicio?->toDateString(),
+        'data_fim' => $item->data_fim?->toDateString(),
+        'quantidade' => $item->quantidade,
+        'atividade_exercicio_cargo' => $item->atividade_exercicio_cargo,
+        'atividade_ordinaria_cargo' => $item->atividade_ordinaria_cargo,
+        'justificativa_relevancia' => $item->justificativa_relevancia,
+        'usado_em_concessao_anterior' => $item->usado_em_concessao_anterior,
+        'tipo_documento' => $item->documentos->first()?->tipo_documento ?? 'Comprovante',
+        'observacao_documento' => $item->documentos->first()?->observacao,
+        'documentos_existentes_count' => $item->documentos->count(),
     ];
 }

@@ -4,7 +4,6 @@ namespace App\Http\Controllers\Rsc;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Rsc\StoreSolicitacaoRscRequest;
-use App\Models\CriterioRsc;
 use App\Models\HistoricoSolicitacaoRsc;
 use App\Models\NivelRsc;
 use App\Models\RequisitoRsc;
@@ -51,20 +50,38 @@ class SolicitacaoRscController extends Controller
         }
 
         return Inertia::render('rsc/solicitacoes/Create', [
-            'servidor' => $servidor,
-            'niveis' => NivelRsc::query()
-                ->with(['escolaridadeMinima', 'requisitosObrigatorios'])
-                ->where('ativo', true)
-                ->orderBy('id')
-                ->get(),
-            'requisitos' => RequisitoRsc::query()
-                ->with(['criterios.variacoesPontuacao'])
-                ->orderBy('numero')
-                ->get(),
+            ...$this->formProps($servidor),
+            'solicitacao' => null,
         ]);
     }
 
     public function store(StoreSolicitacaoRscRequest $request, CalculaSolicitacaoRsc $calcula): RedirectResponse
+    {
+        return $this->persist($request, $calcula);
+    }
+
+    public function edit(SolicitacaoRsc $solicitacao): Response
+    {
+        abort_unless($solicitacao->servidor()->where('user_id', auth()->id())->exists(), 403);
+        abort_unless($this->isEditable($solicitacao), 403);
+
+        $servidor = $solicitacao->servidor()->with('escolaridade')->firstOrFail();
+
+        return Inertia::render('rsc/solicitacoes/Create', [
+            ...$this->formProps($servidor),
+            'solicitacao' => $this->serializeSolicitacaoFormulario($solicitacao),
+        ]);
+    }
+
+    public function update(StoreSolicitacaoRscRequest $request, CalculaSolicitacaoRsc $calcula, SolicitacaoRsc $solicitacao): RedirectResponse
+    {
+        abort_unless($solicitacao->servidor()->where('user_id', auth()->id())->exists(), 403);
+        abort_unless($this->isEditable($solicitacao), 403);
+
+        return $this->persist($request, $calcula, $solicitacao);
+    }
+
+    private function persist(StoreSolicitacaoRscRequest $request, CalculaSolicitacaoRsc $calcula, ?SolicitacaoRsc $solicitacao = null): RedirectResponse
     {
         $user = $request->user();
         abort_unless($user instanceof User, 401);
@@ -90,19 +107,18 @@ class SolicitacaoRscController extends Controller
                 ->withInput();
         }
 
-        $solicitacao = DB::transaction(function () use ($request, $servidor, $nivel, $validated, $resultado, $user): SolicitacaoRsc {
+        $solicitacao = DB::transaction(function () use ($request, $servidor, $nivel, $validated, $resultado, $user, $solicitacao): SolicitacaoRsc {
             $status = match (true) {
                 $validated['intent'] === 'submit' => SolicitacaoRscStatus::Submetida,
                 $resultado['apta'] => SolicitacaoRscStatus::AptaParaSubmissao,
                 default => SolicitacaoRscStatus::Rascunho,
             };
+            $statusAnterior = $solicitacao?->getRawOriginal('status');
 
-            $solicitacao = SolicitacaoRsc::query()->create([
+            $attributes = [
                 'servidor_id' => $servidor->id,
                 'nivel_rsc_id' => $nivel->id,
-                'numero_protocolo' => $this->gerarProtocolo(),
                 'status' => $status,
-                'data_abertura' => now(),
                 'data_submissao' => $validated['intent'] === 'submit' ? now() : null,
                 'saldo_pontos_anterior' => $validated['saldo_pontos_anterior'] ?? 0,
                 'pontos_declarados' => $resultado['pontos'],
@@ -110,48 +126,24 @@ class SolicitacaoRscController extends Controller
                 'memorial' => $validated['memorial'] ?? null,
                 'declaracao_veracidade' => $validated['declaracao_veracidade'],
                 'declaracao_nao_reutilizacao' => $validated['declaracao_nao_reutilizacao'],
-            ]);
+            ];
 
-            foreach ($resultado['itens'] as $index => $item) {
-                $criterio = SolicitacaoRscCriterio::query()->create([
-                    'solicitacao_rsc_id' => $solicitacao->id,
-                    'criterio_rsc_id' => $item['criterio_rsc_id'],
-                    'variacao_pontuacao_id' => $item['variacao_pontuacao_id'],
-                    'titulo_atividade' => $item['titulo_atividade'],
-                    'descricao_atividade' => $item['descricao_atividade'],
-                    'data_inicio' => $item['data_inicio'] ?? null,
-                    'data_fim' => $item['data_fim'] ?? null,
-                    'quantidade' => $item['quantidade'],
-                    'pontos_unitarios' => $item['pontos_unitarios'],
-                    'pontos_calculados' => $item['pontos_calculados'],
-                    'atividade_exercicio_cargo' => $item['atividade_exercicio_cargo'],
-                    'atividade_ordinaria_cargo' => $item['atividade_ordinaria_cargo'],
-                    'justificativa_relevancia' => $item['justificativa_relevancia'],
-                    'usado_em_concessao_anterior' => $item['usado_em_concessao_anterior'],
+            if ($solicitacao) {
+                $solicitacao->update($attributes);
+            } else {
+                $solicitacao = SolicitacaoRsc::query()->create([
+                    ...$attributes,
+                    'numero_protocolo' => $this->gerarProtocolo(),
+                    'data_abertura' => now(),
                 ]);
-
-                $documentos = $request->file("atividades.{$index}.documentos", []);
-
-                if ($documentos instanceof UploadedFile) {
-                    $documentos = [$documentos];
-                }
-
-                foreach ($documentos as $documento) {
-                    $criterio->documentos()->create([
-                        'tipo_documento' => $item['tipo_documento'],
-                        'nome_original' => $documento->getClientOriginalName(),
-                        'caminho_arquivo' => $documento->store("rsc/solicitacoes/{$solicitacao->id}"),
-                        'mime_type' => (string) $documento->getMimeType(),
-                        'tamanho' => $documento->getSize(),
-                        'observacao' => $item['observacao_documento'] ?? null,
-                    ]);
-                }
             }
+
+            $this->syncAtividades($request, $solicitacao, $resultado['itens']);
 
             HistoricoSolicitacaoRsc::query()->create([
                 'solicitacao_rsc_id' => $solicitacao->id,
                 'usuario_id' => $user->id,
-                'status_anterior' => null,
+                'status_anterior' => $statusAnterior,
                 'status_novo' => $status->value,
                 'descricao' => $status === SolicitacaoRscStatus::Submetida
                     ? 'Solicitação submetida pelo servidor.'
@@ -200,6 +192,65 @@ class SolicitacaoRscController extends Controller
     }
 
     /**
+     * @param  array<int, array<string, mixed>>  $itens
+     */
+    private function syncAtividades(StoreSolicitacaoRscRequest $request, SolicitacaoRsc $solicitacao, array $itens): void
+    {
+        $existentes = $solicitacao->criterios()->with('documentos')->get()->keyBy('id');
+        $mantidos = [];
+
+        foreach ($itens as $index => $item) {
+            $atividadeId = (int) ($item['id'] ?? 0);
+            $criterio = $atividadeId > 0 && $existentes->has($atividadeId)
+                ? $existentes->get($atividadeId)
+                : new SolicitacaoRscCriterio(['solicitacao_rsc_id' => $solicitacao->id]);
+
+            $criterio->fill([
+                'solicitacao_rsc_id' => $solicitacao->id,
+                'criterio_rsc_id' => $item['criterio_rsc_id'],
+                'variacao_pontuacao_id' => $item['variacao_pontuacao_id'],
+                'titulo_atividade' => $item['titulo_atividade'],
+                'descricao_atividade' => $item['descricao_atividade'],
+                'data_inicio' => $item['data_inicio'] ?? null,
+                'data_fim' => $item['data_fim'] ?? null,
+                'quantidade' => $item['quantidade'],
+                'pontos_unitarios' => $item['pontos_unitarios'],
+                'pontos_calculados' => $item['pontos_calculados'],
+                'atividade_exercicio_cargo' => $item['atividade_exercicio_cargo'],
+                'atividade_ordinaria_cargo' => $item['atividade_ordinaria_cargo'],
+                'justificativa_relevancia' => $item['justificativa_relevancia'],
+                'usado_em_concessao_anterior' => $item['usado_em_concessao_anterior'],
+            ])->save();
+
+            $mantidos[] = $criterio->id;
+            $documentos = $request->file("atividades.{$index}.documentos", []);
+
+            if ($documentos instanceof UploadedFile) {
+                $documentos = [$documentos];
+            }
+
+            foreach ($documentos as $documento) {
+                $criterio->documentos()->create([
+                    'tipo_documento' => $item['tipo_documento'],
+                    'nome_original' => $documento->getClientOriginalName(),
+                    'caminho_arquivo' => $documento->store("rsc/solicitacoes/{$solicitacao->id}"),
+                    'mime_type' => (string) $documento->getMimeType(),
+                    'tamanho' => $documento->getSize(),
+                    'observacao' => $item['observacao_documento'] ?? null,
+                ]);
+            }
+        }
+
+        $removidos = $solicitacao->criterios();
+
+        if ($mantidos !== []) {
+            $removidos->whereNotIn('id', $mantidos);
+        }
+
+        $removidos->delete();
+    }
+
+    /**
      * @return array<string, mixed>
      */
     private function serializeSolicitacaoResumo(SolicitacaoRsc $solicitacao): array
@@ -218,7 +269,77 @@ class SolicitacaoRscController extends Controller
             'criterios_declarados' => $solicitacao->criterios_declarados,
             'data_abertura' => $dataAbertura ? Carbon::parse($dataAbertura)->toDateTimeString() : null,
             'data_submissao' => $dataSubmissao ? Carbon::parse($dataSubmissao)->toDateTimeString() : null,
+            'can_edit' => $this->isEditable($solicitacao),
         ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeSolicitacaoFormulario(SolicitacaoRsc $solicitacao): array
+    {
+        $solicitacao->load([
+            'criterios.documentos',
+            'nivelRsc',
+        ]);
+
+        return [
+            ...$this->serializeSolicitacaoResumo($solicitacao),
+            'nivel_rsc_id' => $solicitacao->nivel_rsc_id,
+            'saldo_pontos_anterior' => $solicitacao->saldo_pontos_anterior,
+            'memorial' => $solicitacao->memorial,
+            'declaracao_veracidade' => $solicitacao->declaracao_veracidade,
+            'declaracao_nao_reutilizacao' => $solicitacao->declaracao_nao_reutilizacao,
+            'atividades' => $solicitacao->criterios->map(fn (SolicitacaoRscCriterio $item): array => [
+                'id' => $item->id,
+                'criterio_rsc_id' => $item->criterio_rsc_id,
+                'variacao_pontuacao_id' => $item->variacao_pontuacao_id,
+                'titulo_atividade' => $item->titulo_atividade,
+                'descricao_atividade' => $item->descricao_atividade,
+                'data_inicio' => $item->data_inicio?->toDateString(),
+                'data_fim' => $item->data_fim?->toDateString(),
+                'quantidade' => $item->quantidade,
+                'atividade_exercicio_cargo' => $item->atividade_exercicio_cargo,
+                'atividade_ordinaria_cargo' => $item->atividade_ordinaria_cargo,
+                'justificativa_relevancia' => $item->justificativa_relevancia,
+                'usado_em_concessao_anterior' => $item->usado_em_concessao_anterior,
+                'tipo_documento' => $item->documentos->first()?->tipo_documento ?? 'Portaria, resolução ou ato de designação',
+                'observacao_documento' => $item->documentos->first()?->observacao ?? '',
+                'documentos_existentes_count' => $item->documentos->count(),
+                'documentos_existentes' => $item->documentos->map(fn ($documento): array => [
+                    'id' => $documento->id,
+                    'nome_original' => $documento->nome_original,
+                    'tipo_documento' => $documento->tipo_documento,
+                    'tamanho' => $documento->tamanho,
+                ]),
+            ]),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function formProps(Servidor $servidor): array
+    {
+        return [
+            'servidor' => $servidor,
+            'niveis' => NivelRsc::query()
+                ->with(['escolaridadeMinima', 'requisitosObrigatorios'])
+                ->where('ativo', true)
+                ->orderBy('id')
+                ->get(),
+            'requisitos' => RequisitoRsc::query()
+                ->with(['criterios.variacoesPontuacao'])
+                ->orderBy('numero')
+                ->get(),
+        ];
+    }
+
+    private function isEditable(SolicitacaoRsc $solicitacao): bool
+    {
+        $status = SolicitacaoRscStatus::from((string) $solicitacao->getRawOriginal('status'));
+
+        return in_array($status, [SolicitacaoRscStatus::Rascunho, SolicitacaoRscStatus::AptaParaSubmissao], true);
     }
 
     private function servidorAutenticado(): ?Servidor

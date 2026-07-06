@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { Head, Link } from '@inertiajs/vue3';
-import { ArrowLeft } from '@lucide/vue';
+import { ArrowLeft, Pencil } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
-import { index } from '@/routes/rsc/solicitacoes';
+import { edit, index } from '@/routes/rsc/solicitacoes';
 
 defineProps<{
     solicitacao: Record<string, any>;
@@ -27,12 +27,20 @@ defineOptions({
                 </p>
             </div>
 
-            <Button variant="outline" as-child>
-                <Link :href="index()">
-                    <ArrowLeft />
-                    Voltar
-                </Link>
-            </Button>
+            <div class="flex flex-wrap gap-2">
+                <Button v-if="solicitacao.can_edit" as-child>
+                    <Link :href="edit(solicitacao.id)">
+                        <Pencil />
+                        Editar rascunho
+                    </Link>
+                </Button>
+                <Button variant="outline" as-child>
+                    <Link :href="index()">
+                        <ArrowLeft />
+                        Voltar
+                    </Link>
+                </Button>
+            </div>
         </div>
 
         <section class="grid gap-4 md:grid-cols-3">

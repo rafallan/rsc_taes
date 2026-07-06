@@ -27,6 +27,7 @@ class StoreSolicitacaoRscRequest extends FormRequest
             'declaracao_veracidade' => ['required', 'boolean'],
             'declaracao_nao_reutilizacao' => ['required', 'boolean'],
             'atividades' => ['required', 'array', 'min:1'],
+            'atividades.*.id' => ['nullable', 'integer', Rule::exists('solicitacao_rsc_criterios', 'id')],
             'atividades.*.criterio_rsc_id' => ['required', 'integer', Rule::exists('criterios_rsc', 'id')->where('ativo', true)],
             'atividades.*.variacao_pontuacao_id' => ['nullable', 'integer', Rule::exists('criterio_rsc_variacoes_pontuacao', 'id')],
             'atividades.*.titulo_atividade' => ['required', 'string', 'max:255'],
@@ -40,6 +41,7 @@ class StoreSolicitacaoRscRequest extends FormRequest
             'atividades.*.usado_em_concessao_anterior' => ['required', 'boolean'],
             'atividades.*.tipo_documento' => ['required', 'string', 'max:100'],
             'atividades.*.observacao_documento' => ['nullable', 'string'],
+            'atividades.*.documentos_existentes_count' => ['nullable', 'integer', 'min:0'],
             'atividades.*.documentos' => ['nullable', 'array'],
             'atividades.*.documentos.*' => ['file', 'mimes:pdf,jpg,jpeg,png,webp', 'max:10240'],
         ];

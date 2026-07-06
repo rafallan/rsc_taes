@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { Head, Link } from '@inertiajs/vue3';
-import { Plus } from '@lucide/vue';
+import { Pencil, Plus } from '@lucide/vue';
 import { Button } from '@/components/ui/button';
-import { create, show } from '@/routes/rsc/solicitacoes';
+import { create, edit, show } from '@/routes/rsc/solicitacoes';
 
 defineProps<{
     servidor: Record<string, any>;
@@ -45,11 +45,12 @@ defineOptions({
                         <th class="p-3 font-medium">Pontos</th>
                         <th class="p-3 font-medium">Critérios</th>
                         <th class="p-3 font-medium">Status</th>
+                        <th class="p-3 font-medium">Ações</th>
                     </tr>
                 </thead>
                 <tbody>
                     <tr v-if="solicitacoes.length === 0">
-                        <td colspan="5" class="p-6 text-center text-muted-foreground">
+                        <td colspan="6" class="p-6 text-center text-muted-foreground">
                             Nenhuma solicitação registrada.
                         </td>
                     </tr>
@@ -63,6 +64,14 @@ defineOptions({
                         <td class="p-3">{{ solicitacao.pontos_declarados }}</td>
                         <td class="p-3">{{ solicitacao.criterios_declarados }}</td>
                         <td class="p-3">{{ solicitacao.status_label }}</td>
+                        <td class="p-3">
+                            <Button v-if="solicitacao.can_edit" variant="outline" as-child>
+                                <Link :href="edit(solicitacao.id)">
+                                    <Pencil />
+                                    Editar
+                                </Link>
+                            </Button>
+                        </td>
                     </tr>
                 </tbody>
             </table>

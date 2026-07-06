@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Link } from '@inertiajs/vue3';
-import { BookOpen, ClipboardList, FolderGit2, LayoutGrid, UserRoundCog } from '@lucide/vue';
+import { Link, usePage } from '@inertiajs/vue3';
+import { BookOpen, ClipboardList, FolderGit2, KeyRound, LayoutGrid, ShieldCheck, UserRoundCog, Users } from '@lucide/vue';
+import { computed } from 'vue';
 import AppLogo from '@/components/AppLogo.vue';
 import NavFooter from '@/components/NavFooter.vue';
 import NavMain from '@/components/NavMain.vue';
@@ -15,11 +16,17 @@ import {
     SidebarMenuItem,
 } from '@/components/ui/sidebar';
 import { dashboard } from '@/routes';
+import { index as adminPermissionsIndex } from '@/routes/admin/permissions';
+import { index as adminRolesIndex } from '@/routes/admin/roles';
+import { index as adminUsersIndex } from '@/routes/admin/users';
 import { edit as rscProfileEdit } from '@/routes/rsc/profile';
 import { index as rscSolicitacoesIndex } from '@/routes/rsc/solicitacoes';
 import type { NavItem } from '@/types';
 
-const mainNavItems: NavItem[] = [
+const page = usePage();
+const isAdmin = computed(() => Boolean((page.props.auth as { isAdmin?: boolean } | undefined)?.isAdmin));
+
+const mainNavItems = computed<NavItem[]>(() => [
     {
         title: 'Dashboard',
         href: dashboard(),
@@ -35,7 +42,26 @@ const mainNavItems: NavItem[] = [
         href: rscProfileEdit(),
         icon: UserRoundCog,
     },
-];
+    ...(isAdmin.value
+        ? [
+              {
+                  title: 'Usuários',
+                  href: adminUsersIndex(),
+                  icon: Users,
+              },
+              {
+                  title: 'Papéis',
+                  href: adminRolesIndex(),
+                  icon: ShieldCheck,
+              },
+              {
+                  title: 'Permissões',
+                  href: adminPermissionsIndex(),
+                  icon: KeyRound,
+              },
+          ]
+        : []),
+]);
 
 const footerNavItems: NavItem[] = [
     {

@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Rsc;
 
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Rsc\StoreSolicitacaoRscRequest;
+use App\Models\DocumentoComprobatorio;
 use App\Models\HistoricoSolicitacaoRsc;
 use App\Models\NivelRsc;
 use App\Models\RequisitoRsc;
@@ -290,29 +291,45 @@ class SolicitacaoRscController extends Controller
             'memorial' => $solicitacao->memorial,
             'declaracao_veracidade' => $solicitacao->declaracao_veracidade,
             'declaracao_nao_reutilizacao' => $solicitacao->declaracao_nao_reutilizacao,
-            'atividades' => $solicitacao->criterios->map(fn (SolicitacaoRscCriterio $item): array => [
-                'id' => $item->id,
-                'criterio_rsc_id' => $item->criterio_rsc_id,
-                'variacao_pontuacao_id' => $item->variacao_pontuacao_id,
-                'titulo_atividade' => $item->titulo_atividade,
-                'descricao_atividade' => $item->descricao_atividade,
-                'data_inicio' => $item->data_inicio?->toDateString(),
-                'data_fim' => $item->data_fim?->toDateString(),
-                'quantidade' => $item->quantidade,
-                'atividade_exercicio_cargo' => $item->atividade_exercicio_cargo,
-                'atividade_ordinaria_cargo' => $item->atividade_ordinaria_cargo,
-                'justificativa_relevancia' => $item->justificativa_relevancia,
-                'usado_em_concessao_anterior' => $item->usado_em_concessao_anterior,
-                'tipo_documento' => $item->documentos->first()?->tipo_documento ?? 'Portaria, resolução ou ato de designação',
-                'observacao_documento' => $item->documentos->first()?->observacao ?? '',
-                'documentos_existentes_count' => $item->documentos->count(),
-                'documentos_existentes' => $item->documentos->map(fn ($documento): array => [
+            'atividades' => $solicitacao->criterios
+                ->map(fn (SolicitacaoRscCriterio $item): array => $this->serializeAtividadeFormulario($item))
+                ->all(),
+        ];
+    }
+
+    /**
+     * @return array<string, mixed>
+     */
+    private function serializeAtividadeFormulario(SolicitacaoRscCriterio $item): array
+    {
+        $dataInicio = $item->getAttribute('data_inicio');
+        $dataFim = $item->getAttribute('data_fim');
+        $primeiroDocumento = $item->documentos->isNotEmpty() ? $item->documentos->first() : null;
+
+        return [
+            'id' => $item->id,
+            'criterio_rsc_id' => $item->criterio_rsc_id,
+            'variacao_pontuacao_id' => $item->variacao_pontuacao_id,
+            'titulo_atividade' => $item->titulo_atividade,
+            'descricao_atividade' => $item->descricao_atividade,
+            'data_inicio' => $dataInicio ? Carbon::parse($dataInicio)->toDateString() : null,
+            'data_fim' => $dataFim ? Carbon::parse($dataFim)->toDateString() : null,
+            'quantidade' => $item->quantidade,
+            'atividade_exercicio_cargo' => $item->atividade_exercicio_cargo,
+            'atividade_ordinaria_cargo' => $item->atividade_ordinaria_cargo,
+            'justificativa_relevancia' => $item->justificativa_relevancia,
+            'usado_em_concessao_anterior' => $item->usado_em_concessao_anterior,
+            'tipo_documento' => $primeiroDocumento ? $primeiroDocumento->tipo_documento : 'Portaria, resolução ou ato de designação',
+            'observacao_documento' => $primeiroDocumento ? $primeiroDocumento->observacao : '',
+            'documentos_existentes_count' => $item->documentos->count(),
+            'documentos_existentes' => $item->documentos
+                ->map(fn (DocumentoComprobatorio $documento): array => [
                     'id' => $documento->id,
                     'nome_original' => $documento->nome_original,
                     'tipo_documento' => $documento->tipo_documento,
                     'tamanho' => $documento->tamanho,
-                ]),
-            ]),
+                ])
+                ->all(),
         ];
     }
 

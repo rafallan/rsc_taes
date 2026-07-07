@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Head, useForm } from '@inertiajs/vue3';
 import { computed, ref } from 'vue';
-import { CheckCircle2, FileText, Paperclip, Plus, Trash2, Upload } from '@lucide/vue';
+import { CheckCircle2, CircleAlert, FileText, ListChecks, Paperclip, Plus, Search, Target, Trash2, Upload, X } from '@lucide/vue';
 import AlertError from '@/components/AlertError.vue';
 import InputError from '@/components/InputError.vue';
 import { Button } from '@/components/ui/button';
@@ -102,6 +102,7 @@ defineOptions({
 
 const isEditing = computed(() => Boolean(props.solicitacao?.id));
 const filtroRequisito = ref<RequisitoFiltro>('todos');
+const buscaCriterio = ref('');
 
 const emptyAtividade = (criterioId: number | '' = ''): AtividadeForm => ({
     id: null,
@@ -149,8 +150,37 @@ const form = useForm({
 
 const selectedNivel = computed(() => props.niveis.find((nivel) => nivel.id === Number(form.nivel_rsc_id)));
 const criterios = computed(() => props.requisitos.flatMap((requisito) => requisito.criterios));
-const requisitosFiltrados = computed(() => (filtroRequisito.value === 'todos' ? props.requisitos : props.requisitos.filter((requisito) => requisito.id === filtroRequisito.value)));
+const requisitosFiltrados = computed(() => {
+    const termo = buscaCriterio.value.trim().toLocaleLowerCase();
+    const requisitosBase = filtroRequisito.value === 'todos' ? props.requisitos : props.requisitos.filter((requisito) => requisito.id === filtroRequisito.value);
+
+    if (!termo) {
+        return requisitosBase;
+    }
+
+    return requisitosBase
+        .map((requisito) => ({
+            ...requisito,
+            criterios: requisito.criterios.filter((criterio) =>
+                [
+                    `requisito ${requisito.numero}`,
+                    requisito.nome,
+                    requisito.descricao,
+                    `${requisito.numero}.${criterio.item}`,
+                    criterio.descricao,
+                    criterio.unidade_medida,
+                ]
+                    .join(' ')
+                    .toLocaleLowerCase()
+                    .includes(termo),
+            ),
+        }))
+        .filter((requisito) => requisito.criterios.length > 0);
+});
 const pageTitle = computed(() => (isEditing.value ? `Editar ${props.solicitacao?.numero_protocolo}` : 'Nova solicitação RSC'));
+const totalCriterios = computed(() => criterios.value.length);
+const criteriosVisiveis = computed(() => requisitosFiltrados.value.reduce((total, requisito) => total + requisito.criterios.length, 0));
+const filtroAtivo = computed(() => filtroRequisito.value !== 'todos' || buscaCriterio.value.trim().length > 0);
 
 function criterioById(id: number | '') {
     return criterios.value.find((criterio) => criterio.id === Number(id));
@@ -187,6 +217,19 @@ function quantidadeDoCriterio(criterio: Criterio) {
 
 function subtotalDoCriterio(criterio: Criterio) {
     return atividadesDoCriterio(criterio).reduce((total, atividade) => total + pontosDaAtividade(atividade), 0);
+}
+
+function pontosDoRequisito(requisito: Requisito) {
+    return requisito.criterios.reduce((total, criterio) => total + subtotalDoCriterio(criterio), 0);
+}
+
+function criteriosSelecionadosDoRequisito(requisito: Requisito) {
+    return requisito.criterios.filter((criterio) => quantidadeDoCriterio(criterio) > 0).length;
+}
+
+function limparFiltros() {
+    filtroRequisito.value = 'todos';
+    buscaCriterio.value = '';
 }
 
 const pontosDeclarados = computed(() => form.atividades.reduce((total, atividade) => total + pontosDaAtividade(atividade), 0));
@@ -445,85 +488,90 @@ function submit(intent: 'draft' | 'submit') {
 <template>
     <Head :title="pageTitle" />
 
-    <main class="flex flex-1 flex-col gap-6">
-        <section class="sticky top-0 z-30 border-b bg-background/95 px-4 py-3 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/80 md:px-6">
-            <div class="grid gap-4 2xl:grid-cols-[minmax(18rem,24rem)_minmax(24rem,1fr)_auto] 2xl:items-center">
-                <div class="grid gap-3">
-                    <div class="grid gap-1">
-                        <h1 class="text-xl font-semibold tracking-normal md:text-2xl">{{ pageTitle }}</h1>
-                        <p class="text-sm text-muted-foreground">
-                            {{ servidor.nome }} · {{ servidor.escolaridade?.nome }}
-                            <span v-if="solicitacao"> · {{ solicitacao.status_label }}</span>
-                        </p>
-                    </div>
-
-                    <div class="grid gap-2">
-                        <Label for="nivel_rsc_id">Nível pleiteado</Label>
-                        <select
-                            id="nivel_rsc_id"
-                            v-model="form.nivel_rsc_id"
-                            class="h-9 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                        >
-                            <option v-for="nivel in niveis" :key="nivel.id" :value="nivel.id">
-                                {{ nivel.nome }} · mínimo {{ nivel.pontos_minimos }} pontos
-                            </option>
-                        </select>
-                        <InputError :message="form.errors.nivel_rsc_id" />
-                    </div>
-                </div>
-
-                <div class="grid gap-3">
-                    <div class="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-                        <div class="grid gap-1">
-                            <p class="text-xs font-medium uppercase text-muted-foreground">Progresso da pontuação</p>
-                            <p :class="['text-2xl font-semibold', progressoCompleto ? 'text-green-700 dark:text-green-400' : 'text-foreground']">
-                                {{ pontosDeclarados.toFixed(2) }} / {{ pontosExigidos.toFixed(2) }} pts
-                            </p>
+    <main class="flex flex-1 flex-col gap-6 bg-muted/20 p-3 sm:p-4 lg:p-6">
+        <section class="overflow-hidden rounded-lg border bg-background shadow-xs">
+            <div class="grid gap-5 p-4 sm:p-6 xl:grid-cols-[minmax(0,1fr)_22rem] xl:items-start">
+                <div class="grid gap-5">
+                    <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                        <div class="grid gap-2">
+                            <span class="inline-flex w-fit items-center gap-2 rounded-full border bg-muted/50 px-3 py-1 text-xs font-medium text-muted-foreground">
+                                <ListChecks class="size-3.5" />
+                                {{ requisitos.length }} requisitos · {{ totalCriterios }} critérios ativos
+                            </span>
+                            <div class="grid gap-1">
+                                <h1 class="text-2xl font-semibold tracking-normal sm:text-3xl">{{ pageTitle }}</h1>
+                                <p class="text-sm text-muted-foreground">
+                                    {{ servidor.nome }} · {{ servidor.escolaridade?.nome }}
+                                    <span v-if="solicitacao"> · {{ solicitacao.status_label }}</span>
+                                </p>
+                            </div>
                         </div>
-                        <div class="flex flex-wrap gap-2 text-sm">
-                            <span
-                                :class="[
-                                    'rounded-md border px-2 py-1 font-medium',
-                                    progressoCompleto ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-400' : 'bg-background',
-                                ]"
-                            >
-                                Faltam {{ saldoNecessario.toFixed(2) }} pts
-                            </span>
-                            <span
-                                :class="[
-                                    'rounded-md border px-2 py-1 font-medium',
-                                    criteriosCompletos ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-400' : 'bg-background',
-                                ]"
-                            >
-                                Itens {{ criteriosDeclarados }} / {{ criteriosExigidos }}
-                            </span>
-                            <span class="rounded-md border bg-background px-2 py-1 font-medium">
-                                Atividades {{ atividadesPreenchidas }}
-                            </span>
+
+                        <div class="flex flex-wrap gap-2">
+                            <Button type="button" variant="outline" :disabled="form.processing" @click="submit('draft')">
+                                <Spinner v-if="form.processing && form.intent === 'draft'" />
+                                Salvar rascunho
+                            </Button>
+                            <Button type="button" :disabled="form.processing || bloqueios.length > 0" @click="submit('submit')">
+                                <Spinner v-if="form.processing && form.intent === 'submit'" />
+                                Submeter
+                            </Button>
                         </div>
                     </div>
 
-                    <div class="h-3 overflow-hidden rounded-full bg-muted">
-                        <div
-                            :class="['h-full rounded-full transition-all', progressoCompleto ? 'bg-green-600' : 'bg-primary']"
-                            :style="{ width: `${progressoPontuacao}%` }"
-                        />
-                    </div>
+                    <div class="grid gap-3 md:grid-cols-[minmax(0,20rem)_1fr] md:items-end">
+                        <div class="grid gap-2">
+                            <Label for="nivel_rsc_id">Nível pleiteado</Label>
+                            <select
+                                id="nivel_rsc_id"
+                                v-model="form.nivel_rsc_id"
+                                class="h-10 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                            >
+                                <option v-for="nivel in niveis" :key="nivel.id" :value="nivel.id">
+                                    {{ nivel.nome }} · mínimo {{ nivel.pontos_minimos }} pontos
+                                </option>
+                            </select>
+                            <InputError :message="form.errors.nivel_rsc_id" />
+                        </div>
 
-                    <p class="text-sm text-muted-foreground">
-                        {{ statusNivel }}
-                    </p>
+                        <div class="grid gap-2">
+                            <div class="flex items-center justify-between gap-3 text-sm">
+                                <span class="font-medium">Progresso da pontuação</span>
+                                <span :class="progressoCompleto ? 'font-semibold text-green-700 dark:text-green-400' : 'text-muted-foreground'">
+                                    {{ progressoPontuacao.toFixed(0) }}%
+                                </span>
+                            </div>
+                            <div class="h-3 overflow-hidden rounded-full bg-muted">
+                                <div
+                                    :class="['h-full rounded-full transition-all', progressoCompleto ? 'bg-green-600' : 'bg-primary']"
+                                    :style="{ width: `${progressoPontuacao}%` }"
+                                />
+                            </div>
+                        </div>
+                    </div>
                 </div>
 
-                <div class="flex flex-wrap gap-2 2xl:justify-end">
-                    <Button type="button" variant="outline" :disabled="form.processing" @click="submit('draft')">
-                        <Spinner v-if="form.processing && form.intent === 'draft'" />
-                        Salvar rascunho
-                    </Button>
-                    <Button type="button" :disabled="form.processing || bloqueios.length > 0" @click="submit('submit')">
-                        <Spinner v-if="form.processing && form.intent === 'submit'" />
-                        Submeter
-                    </Button>
+                <div class="grid grid-cols-2 gap-2 sm:grid-cols-4 xl:grid-cols-2">
+                    <div class="rounded-lg border bg-muted/30 p-3">
+                        <p class="text-xs font-medium uppercase text-muted-foreground">Pontos</p>
+                        <p class="mt-1 text-xl font-semibold">{{ pontosDeclarados.toFixed(2) }}</p>
+                        <p class="text-xs text-muted-foreground">de {{ pontosExigidos.toFixed(2) }}</p>
+                    </div>
+                    <div class="rounded-lg border bg-muted/30 p-3">
+                        <p class="text-xs font-medium uppercase text-muted-foreground">Faltam</p>
+                        <p class="mt-1 text-xl font-semibold">{{ saldoNecessario.toFixed(2) }}</p>
+                        <p class="text-xs text-muted-foreground">pontos</p>
+                    </div>
+                    <div class="rounded-lg border bg-muted/30 p-3">
+                        <p class="text-xs font-medium uppercase text-muted-foreground">Critérios</p>
+                        <p class="mt-1 text-xl font-semibold">{{ criteriosDeclarados }} / {{ criteriosExigidos }}</p>
+                        <p class="text-xs text-muted-foreground">{{ criteriosCompletos ? 'mínimo ok' : 'em andamento' }}</p>
+                    </div>
+                    <div class="rounded-lg border bg-muted/30 p-3">
+                        <p class="text-xs font-medium uppercase text-muted-foreground">Status</p>
+                        <p class="mt-1 text-xl font-semibold">{{ statusNivel }}</p>
+                        <p class="text-xs text-muted-foreground">{{ atividadesPreenchidas }} atividade(s)</p>
+                    </div>
                 </div>
             </div>
         </section>
@@ -532,367 +580,436 @@ function submit(intent: 'draft' | 'submit') {
             <AlertError title="Não foi possível enviar a solicitação." :errors="serverErrorMessages" />
         </div>
 
-        <form class="grid gap-6 px-4 pb-6 md:px-6" @submit.prevent="submit('draft')">
-            <section class="grid gap-4 rounded-lg border p-4">
-                <div v-if="selectedNivel" class="grid gap-2 rounded-md bg-muted p-3 text-sm">
-                    <div class="flex flex-wrap gap-3">
-                        <span>{{ selectedNivel.criterios_minimos }} critério(s) mínimo(s)</span>
-                        <span>{{ selectedNivel.percentual_iq }}% de IQ</span>
-                        <span v-if="selectedNivel.requisitos_obrigatorios.length">
-                            Requisito especial obrigatório
+        <form class="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(21rem,28rem)] xl:items-start" @submit.prevent="submit('draft')">
+            <div class="grid gap-6">
+                <section class="grid gap-4 rounded-lg border bg-background p-4 shadow-xs sm:p-5">
+                    <div class="flex items-start gap-3">
+                        <span
+                            :class="[
+                                'inline-flex size-10 shrink-0 items-center justify-center rounded-lg border',
+                                bloqueios.length === 0 ? 'border-green-200 bg-green-50 text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-400' : 'bg-muted text-muted-foreground',
+                            ]"
+                        >
+                            <CheckCircle2 v-if="bloqueios.length === 0" class="size-5" />
+                            <CircleAlert v-else class="size-5" />
                         </span>
+                        <div class="grid gap-2">
+                            <div>
+                                <h2 class="text-lg font-semibold">Checklist da solicitação</h2>
+                                <p class="text-sm text-muted-foreground">
+                                    O sistema acompanha as regras automáticas enquanto você monta o pedido.
+                                </p>
+                            </div>
+                            <div v-if="selectedNivel" class="flex flex-wrap gap-2 text-sm">
+                                <span class="rounded-full border bg-muted/40 px-3 py-1">{{ selectedNivel.criterios_minimos }} critério(s) mínimo(s)</span>
+                                <span class="rounded-full border bg-muted/40 px-3 py-1">{{ selectedNivel.percentual_iq }}% de IQ</span>
+                                <span v-if="selectedNivel.requisitos_obrigatorios.length" class="rounded-full border bg-muted/40 px-3 py-1">Requisito especial obrigatório</span>
+                            </div>
+                        </div>
                     </div>
-                    <ul v-if="bloqueios.length" class="grid gap-1 text-destructive">
+
+                    <ul v-if="bloqueios.length" class="grid gap-2 rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">
                         <li v-for="bloqueio in bloqueios" :key="bloqueio">
                             {{ bloqueio }}
                         </li>
                     </ul>
-                    <p v-else class="flex items-center gap-2 text-green-700 dark:text-green-400">
+                    <p v-else class="flex items-center gap-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm text-green-700 dark:border-green-900 dark:bg-green-950/40 dark:text-green-400">
                         <CheckCircle2 class="size-4" />
                         Critérios automáticos atendidos.
                     </p>
-                </div>
+                </section>
 
-                <div class="grid gap-2">
-                    <Label for="memorial">Memorial</Label>
-                    <textarea
-                        id="memorial"
-                        v-model="form.memorial"
-                        rows="6"
-                        class="min-h-32 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                    />
-                    <InputError :message="form.errors.memorial" />
-                </div>
-            </section>
-
-            <div class="grid gap-6 lg:grid-cols-3">
-                <section class="grid gap-4 lg:col-span-2">
-                    <div class="flex flex-col gap-3">
-                        <div>
-                            <h2 class="text-lg font-medium">Rol de saberes e competências RSC-TAE</h2>
-                            <p class="text-sm text-muted-foreground">
-                                Informe a quantidade diretamente na linha do critério; comprovantes e declarações ficam em atividades preenchidas.
-                            </p>
-                        </div>
-
-                    <div class="flex flex-wrap gap-2">
-                        <Button type="button" :variant="filtroRequisito === 'todos' ? 'default' : 'outline'" @click="filtroRequisito = 'todos'">
-                            Todos
-                        </Button>
-                        <Button
-                            v-for="requisito in requisitos"
-                            :key="requisito.id"
-                            type="button"
-                            :variant="filtroRequisito === requisito.id ? 'default' : 'outline'"
-                            @click="filtroRequisito = requisito.id"
-                        >
-                            Requisito {{ requisito.numero }}
-                        </Button>
-                    </div>
-                </div>
-
-                <div class="grid gap-4">
-                    <article v-for="requisito in requisitosFiltrados" :key="requisito.id" class="overflow-hidden rounded-lg border">
-                        <div class="grid gap-1 border-b bg-muted/40 p-4">
-                            <h3 class="font-medium">Requisito {{ requisito.numero }} - {{ requisito.nome }}</h3>
-                            <p class="text-sm text-muted-foreground">{{ requisito.descricao }}</p>
-                        </div>
-
-                        <div class="overflow-x-auto">
-                            <table class="w-full min-w-[56rem] text-sm">
-                                <thead class="bg-background text-left text-xs uppercase text-muted-foreground">
-                                    <tr>
-                                        <th class="w-12 px-3 py-3 text-center font-medium">#</th>
-                                        <th class="px-3 py-3 font-medium">Critério</th>
-                                        <th class="w-40 px-3 py-3 text-center font-medium">Medida</th>
-                                        <th class="w-20 px-3 py-3 text-center font-medium">Pts</th>
-                                        <th class="w-32 px-3 py-3 text-center font-medium">Qtd.</th>
-                                        <th class="w-28 px-3 py-3 text-right font-medium">Subtotal</th>
-                                        <th class="w-28 px-3 py-3 text-center font-medium">Detalhes</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <tr v-for="criterio in requisito.criterios" :key="criterio.id" class="border-t align-top">
-                                        <td class="px-3 py-3 text-center font-medium text-muted-foreground">
-                                            {{ criterio.item }}
-                                        </td>
-                                        <td class="px-3 py-3">
-                                            <div class="grid gap-2">
-                                                <p>{{ criterio.descricao }}</p>
-                                                <div v-if="criterio.variacoes_pontuacao.length" class="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                                                    <span v-for="variacao in criterio.variacoes_pontuacao" :key="variacao.id" class="rounded border px-2 py-1">
-                                                        {{ variacao.nome }} · {{ variacao.pontos }} pts
-                                                    </span>
-                                                </div>
-                                            </div>
-                                        </td>
-                                        <td class="px-3 py-3 text-center">
-                                            <span class="inline-flex rounded-full bg-muted px-2 py-1 text-xs text-muted-foreground">
-                                                {{ criterio.unidade_medida }}
-                                            </span>
-                                        </td>
-                                        <td class="px-3 py-3 text-center font-medium">
-                                            {{ criterio.pontos }}
-                                        </td>
-                                        <td class="px-3 py-3">
-                                            <div class="flex items-center justify-center gap-1">
-                                                <Button
-                                                    type="button"
-                                                    variant="outline"
-                                                    size="icon"
-                                                    :disabled="quantidadeDoCriterio(criterio) <= 0"
-                                                    @click="adjustQuantidadeCriterio(criterio, -1)"
-                                                >
-                                                    -
-                                                </Button>
-                                                <Input
-                                                    :value="quantidadeDoCriterio(criterio)"
-                                                    type="number"
-                                                    min="0"
-                                                    step="0.01"
-                                                    class="h-9 w-20 text-center"
-                                                    @input="setQuantidadeCriterio(criterio, $event)"
-                                                />
-                                                <Button type="button" variant="outline" size="icon" @click="adjustQuantidadeCriterio(criterio, 1)">
-                                                    +
-                                                </Button>
-                                            </div>
-                                        </td>
-                                        <td class="px-3 py-3 text-right font-semibold">
-                                            {{ subtotalDoCriterio(criterio).toFixed(2) }}
-                                        </td>
-                                        <td class="px-3 py-3 text-center">
-                                            <Button type="button" variant="outline" @click="abrirDetalheCriterio(criterio)">
-                                                <FileText />
-                                                Abrir
-                                            </Button>
-                                        </td>
-                                    </tr>
-                                </tbody>
-                            </table>
-                        </div>
-                    </article>
-                </div>
-            </section>
-
-            <section class="grid gap-4 lg:col-span-1 lg:self-start">
-                <div class="flex flex-col justify-between gap-3 2xl:flex-row 2xl:items-center">
+                <section class="grid gap-3 rounded-lg border bg-background p-4 shadow-xs sm:p-5">
                     <div>
-                        <h2 class="text-lg font-medium">Atividades preenchidas</h2>
-                        <p class="text-sm text-muted-foreground">
-                            Complete os dados de cada atividade e mantenha os documentos junto ao item correspondente.
-                        </p>
+                        <h2 class="text-lg font-semibold">Memorial</h2>
+                        <p class="text-sm text-muted-foreground">Resuma sua trajetória, as entregas relevantes e a relação com os critérios declarados.</p>
                     </div>
-                    <Button type="button" variant="outline" @click="addAtividade()">
-                        <Plus />
-                        Atividade em branco
-                    </Button>
-                </div>
+                    <div class="grid gap-2">
+                        <Label for="memorial">Texto do memorial</Label>
+                        <textarea
+                            id="memorial"
+                            v-model="form.memorial"
+                            rows="7"
+                            class="min-h-40 rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                        />
+                        <InputError :message="form.errors.memorial" />
+                    </div>
+                </section>
 
-                <article v-for="(atividade, index) in form.atividades" :key="atividade.id ?? index" class="grid gap-4 rounded-lg border p-4">
-                    <div class="flex flex-col justify-between gap-3 2xl:flex-row 2xl:items-start">
-                        <div class="grid gap-1">
-                            <h3 class="text-base font-medium">Atividade {{ index + 1 }}</h3>
-                            <p v-if="criterioById(atividade.criterio_rsc_id)" class="text-sm text-muted-foreground">
-                                Requisito {{ requisitoById(atividade.criterio_rsc_id)?.numero }} · item
-                                {{ criterioById(atividade.criterio_rsc_id)?.item }}
-                            </p>
+                <section class="grid gap-4">
+                    <div class="flex flex-col gap-4 rounded-lg border bg-background p-4 shadow-xs sm:p-5">
+                        <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                            <div>
+                                <h2 class="text-lg font-semibold">Rol de saberes e competências RSC-TAE</h2>
+                                <p class="text-sm text-muted-foreground">
+                                    Navegue por todos os requisitos, filtre por assunto e declare a quantidade no critério escolhido.
+                                </p>
+                            </div>
+                            <div class="rounded-full border bg-muted/40 px-3 py-1 text-sm text-muted-foreground">
+                                Exibindo {{ criteriosVisiveis }} de {{ totalCriterios }} critérios
+                            </div>
                         </div>
-                        <div class="flex items-center gap-2">
-                            <span class="rounded-md bg-muted px-2 py-1 text-sm font-medium">
-                                {{ pontosDaAtividade(atividade).toFixed(2) }} pts
-                            </span>
-                            <Button type="button" variant="ghost" size="icon" @click="removeAtividade(index)">
-                                <Trash2 />
+
+                        <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+                            <div class="relative">
+                                <Search class="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                                <Input v-model="buscaCriterio" class="h-10 pl-9" placeholder="Buscar por requisito, item, assunto ou unidade de medida" />
+                            </div>
+                            <Button v-if="filtroAtivo" type="button" variant="outline" @click="limparFiltros">
+                                <X class="size-4" />
+                                Limpar filtros
+                            </Button>
+                        </div>
+
+                        <div class="flex gap-2 overflow-x-auto pb-1">
+                            <Button type="button" :variant="filtroRequisito === 'todos' ? 'default' : 'outline'" class="shrink-0" @click="filtroRequisito = 'todos'">
+                                Todos
+                            </Button>
+                            <Button
+                                v-for="requisito in requisitos"
+                                :key="requisito.id"
+                                type="button"
+                                :variant="filtroRequisito === requisito.id ? 'default' : 'outline'"
+                                class="shrink-0"
+                                @click="filtroRequisito = requisito.id"
+                            >
+                                Req. {{ requisito.numero }}
+                                <span class="rounded-full bg-background/20 px-1.5 text-xs">{{ requisito.criterios.length }}</span>
                             </Button>
                         </div>
                     </div>
 
-                    <div class="grid gap-4 2xl:grid-cols-2">
-                        <div class="grid gap-2 2xl:col-span-2">
-                            <Label :for="`criterio-${index}`">Critério</Label>
-                            <select
-                                :id="`criterio-${index}`"
-                                v-model="atividade.criterio_rsc_id"
-                                class="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                                @change="atividade.variacao_pontuacao_id = ''"
-                            >
-                                <option value="">Selecione</option>
-                                <optgroup v-for="requisito in requisitos" :key="requisito.id" :label="`${requisito.numero}. ${requisito.nome}`">
-                                    <option v-for="criterio in requisito.criterios" :key="criterio.id" :value="criterio.id">
-                                        {{ requisito.numero }}.{{ criterio.item }} · {{ criterio.descricao }}
-                                    </option>
-                                </optgroup>
-                            </select>
-                            <InputError :message="atividadeError(index, 'criterio_rsc_id')" />
-                        </div>
-
-                        <div v-if="criterioById(atividade.criterio_rsc_id)?.variacoes_pontuacao.length" class="grid gap-2">
-                            <Label :for="`variacao-${index}`">Variação</Label>
-                            <select
-                                :id="`variacao-${index}`"
-                                v-model="atividade.variacao_pontuacao_id"
-                                class="h-9 rounded-md border border-input bg-transparent px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                            >
-                                <option value="">Selecione</option>
-                                <option
-                                    v-for="variacao in criterioById(atividade.criterio_rsc_id)?.variacoes_pontuacao"
-                                    :key="variacao.id"
-                                    :value="variacao.id"
-                                >
-                                    {{ variacao.nome }} · {{ variacao.pontos }} pontos
-                                </option>
-                            </select>
-                            <InputError :message="atividadeError(index, 'variacao_pontuacao_id')" />
-                        </div>
-
-                        <div class="grid gap-2">
-                            <Label :for="`quantidade-${index}`">Quantidade</Label>
-                            <Input :id="`quantidade-${index}`" v-model="atividade.quantidade" type="number" min="0.01" step="0.01" />
-                            <InputError :message="atividadeError(index, 'quantidade')" />
-                        </div>
-
-                        <div class="grid gap-2 2xl:col-span-2">
-                            <Label :for="`titulo-${index}`">Título da atividade</Label>
-                            <Input :id="`titulo-${index}`" v-model="atividade.titulo_atividade" />
-                            <InputError :message="atividadeError(index, 'titulo_atividade')" />
-                        </div>
-
-                        <div class="grid gap-2">
-                            <Label :for="`inicio-${index}`">Data inicial</Label>
-                            <Input :id="`inicio-${index}`" v-model="atividade.data_inicio" type="date" />
-                            <InputError :message="atividadeError(index, 'data_inicio')" />
-                        </div>
-
-                        <div class="grid gap-2">
-                            <Label :for="`fim-${index}`">Data final</Label>
-                            <Input :id="`fim-${index}`" v-model="atividade.data_fim" type="date" />
-                            <InputError :message="atividadeError(index, 'data_fim')" />
-                        </div>
-
-                        <div class="grid gap-2 2xl:col-span-2">
-                            <Label :for="`descricao-${index}`">Descrição</Label>
-                            <textarea
-                                :id="`descricao-${index}`"
-                                v-model="atividade.descricao_atividade"
-                                rows="4"
-                                class="rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                            />
-                            <InputError :message="atividadeError(index, 'descricao_atividade')" />
-                        </div>
-
-                        <div class="grid gap-2 2xl:col-span-2">
-                            <Label :for="`relevancia-${index}`">Justificativa de relevância</Label>
-                            <textarea
-                                :id="`relevancia-${index}`"
-                                v-model="atividade.justificativa_relevancia"
-                                rows="4"
-                                class="rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
-                            />
-                            <InputError :message="atividadeError(index, 'justificativa_relevancia')" />
-                        </div>
-
-                        <div class="grid gap-2">
-                            <Label :for="`tipo-documento-${index}`">Tipo de documento</Label>
-                            <Input :id="`tipo-documento-${index}`" v-model="atividade.tipo_documento" />
-                            <InputError :message="atividadeError(index, 'tipo_documento')" />
-                        </div>
-
-                        <div class="grid gap-2">
-                            <Label :for="`observacao-documento-${index}`">Observação do documento</Label>
-                            <Input :id="`observacao-documento-${index}`" v-model="atividade.observacao_documento" />
-                        </div>
+                    <div v-if="requisitosFiltrados.length === 0" class="rounded-lg border bg-background p-8 text-center shadow-xs">
+                        <p class="font-medium">Nenhum critério encontrado.</p>
+                        <p class="mt-1 text-sm text-muted-foreground">Ajuste a busca ou volte para todos os requisitos.</p>
                     </div>
 
-                    <div class="grid gap-3 rounded-md border bg-muted/30 p-3">
-                        <div class="flex flex-col justify-between gap-3 2xl:flex-row 2xl:items-center">
-                            <div>
-                                <h4 class="flex items-center gap-2 text-sm font-medium">
-                                    <Paperclip class="size-4" />
-                                    Comprovante da atividade
-                                </h4>
-                                <p class="text-sm text-muted-foreground">
-                                    Arquivos PDF, JPG, PNG ou WEBP até 10 MB por arquivo.
-                                </p>
+                    <div v-for="requisito in requisitosFiltrados" :key="requisito.id" class="grid gap-3">
+                        <div class="flex flex-col gap-3 border-l-4 border-primary bg-background p-4 shadow-xs sm:flex-row sm:items-start sm:justify-between">
+                            <div class="grid gap-1">
+                                <p class="text-xs font-semibold uppercase text-muted-foreground">Requisito {{ requisito.numero }}</p>
+                                <h3 class="text-lg font-semibold">{{ requisito.nome }}</h3>
+                                <p class="text-sm text-muted-foreground">{{ requisito.descricao }}</p>
                             </div>
-                            <Label
-                                :for="`documentos-${index}`"
-                                class="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium shadow-xs hover:bg-accent hover:text-accent-foreground"
+                            <div class="flex shrink-0 flex-wrap gap-2 text-sm">
+                                <span class="rounded-full border bg-muted/40 px-3 py-1">{{ requisito.criterios.length }} critério(s)</span>
+                                <span class="rounded-full border bg-muted/40 px-3 py-1">{{ criteriosSelecionadosDoRequisito(requisito) }} selecionado(s)</span>
+                                <span class="rounded-full border bg-muted/40 px-3 py-1">{{ pontosDoRequisito(requisito).toFixed(2) }} pts</span>
+                            </div>
+                        </div>
+
+                        <div class="grid gap-3 md:grid-cols-2">
+                            <article
+                                v-for="criterio in requisito.criterios"
+                                :key="criterio.id"
+                                :class="[
+                                    'grid gap-4 rounded-lg border bg-background p-4 shadow-xs transition',
+                                    quantidadeDoCriterio(criterio) > 0 ? 'border-primary/50 ring-2 ring-primary/10' : 'hover:border-primary/30',
+                                ]"
                             >
-                                <Upload class="size-4" />
-                                Selecionar arquivos
-                            </Label>
-                            <Input :id="`documentos-${index}`" type="file" multiple accept=".pdf,.jpg,.jpeg,.png,.webp" class="sr-only" @change="setFiles($event, atividade)" />
-                        </div>
-
-                        <div v-if="atividade.documentos_existentes.length" class="grid gap-2">
-                            <p class="text-xs font-medium uppercase text-muted-foreground">Já anexados</p>
-                            <div class="grid gap-2">
-                                <div v-for="documento in atividade.documentos_existentes" :key="documento.id" class="flex items-center justify-between gap-3 rounded-md bg-background p-2 text-sm">
-                                    <span class="flex min-w-0 items-center gap-2">
-                                        <FileText class="size-4 shrink-0" />
-                                        <span class="truncate">{{ documento.nome_original }}</span>
-                                    </span>
-                                    <span class="shrink-0 text-xs text-muted-foreground">{{ formatBytes(documento.tamanho) }}</span>
+                                <div class="grid gap-3">
+                                    <div class="flex items-start justify-between gap-3">
+                                        <span class="inline-flex size-9 shrink-0 items-center justify-center rounded-md border bg-muted/40 text-sm font-semibold">
+                                            {{ requisito.numero }}.{{ criterio.item }}
+                                        </span>
+                                        <span class="rounded-full bg-muted px-2.5 py-1 text-xs font-medium text-muted-foreground">
+                                            {{ criterio.unidade_medida }}
+                                        </span>
+                                    </div>
+                                    <p class="text-sm leading-6">{{ criterio.descricao }}</p>
+                                    <div v-if="criterio.variacoes_pontuacao.length" class="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                                        <span v-for="variacao in criterio.variacoes_pontuacao" :key="variacao.id" class="rounded-full border bg-muted/30 px-2.5 py-1">
+                                            {{ variacao.nome }} · {{ variacao.pontos }} pts
+                                        </span>
+                                    </div>
                                 </div>
-                            </div>
-                        </div>
 
-                        <div v-if="atividade.documentos.length" class="grid gap-2">
-                            <p class="text-xs font-medium uppercase text-muted-foreground">Novos anexos</p>
-                            <div class="grid gap-2">
-                                <div v-for="(documento, fileIndex) in atividade.documentos" :key="`${documento.name}-${fileIndex}`" class="flex items-center justify-between gap-3 rounded-md bg-background p-2 text-sm">
-                                    <span class="flex min-w-0 items-center gap-2">
-                                        <FileText class="size-4 shrink-0" />
-                                        <span class="truncate">{{ documento.name }}</span>
+                                <div class="grid gap-3 border-t pt-4">
+                                    <div class="grid grid-cols-2 gap-3 text-sm">
+                                        <div class="rounded-md bg-muted/40 p-3">
+                                            <p class="text-xs text-muted-foreground">Pontuação base</p>
+                                            <p class="font-semibold">{{ criterio.pontos }} pts</p>
+                                        </div>
+                                        <div class="rounded-md bg-muted/40 p-3">
+                                            <p class="text-xs text-muted-foreground">Subtotal</p>
+                                            <p class="font-semibold">{{ subtotalDoCriterio(criterio).toFixed(2) }} pts</p>
+                                        </div>
+                                    </div>
+
+                                    <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                        <div class="flex items-center gap-1">
+                                            <Button
+                                                type="button"
+                                                variant="outline"
+                                                size="icon"
+                                                :disabled="quantidadeDoCriterio(criterio) <= 0"
+                                                @click="adjustQuantidadeCriterio(criterio, -1)"
+                                            >
+                                                -
+                                            </Button>
+                                            <Input
+                                                :value="quantidadeDoCriterio(criterio)"
+                                                type="number"
+                                                min="0"
+                                                step="0.01"
+                                                class="h-9 w-24 text-center"
+                                                @input="setQuantidadeCriterio(criterio, $event)"
+                                            />
+                                            <Button type="button" variant="outline" size="icon" @click="adjustQuantidadeCriterio(criterio, 1)">
+                                                +
+                                            </Button>
+                                        </div>
+                                        <Button type="button" variant="outline" @click="abrirDetalheCriterio(criterio)">
+                                            <FileText class="size-4" />
+                                            Detalhar
+                                        </Button>
+                                    </div>
+                                </div>
+                            </article>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <aside class="grid gap-4 xl:sticky xl:top-4">
+                <section class="grid gap-4 rounded-lg border bg-background p-4 shadow-xs sm:p-5">
+                    <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div>
+                            <h2 class="text-lg font-semibold">Atividades e comprovantes</h2>
+                            <p class="text-sm text-muted-foreground">
+                                Complete os detalhes dos critérios selecionados e anexe os documentos.
+                            </p>
+                        </div>
+                        <Button type="button" variant="outline" @click="addAtividade()">
+                            <Plus class="size-4" />
+                            Em branco
+                        </Button>
+                    </div>
+
+                    <div class="grid gap-3">
+                        <article v-for="(atividade, index) in form.atividades" :key="atividade.id ?? index" class="grid gap-4 rounded-lg border bg-muted/10 p-4">
+                            <div class="flex items-start justify-between gap-3">
+                                <div class="grid gap-1">
+                                    <h3 class="text-base font-semibold">Atividade {{ index + 1 }}</h3>
+                                    <p v-if="criterioById(atividade.criterio_rsc_id)" class="text-sm text-muted-foreground">
+                                        Requisito {{ requisitoById(atividade.criterio_rsc_id)?.numero }} · item
+                                        {{ criterioById(atividade.criterio_rsc_id)?.item }}
+                                    </p>
+                                </div>
+                                <div class="flex items-center gap-2">
+                                    <span class="rounded-md bg-background px-2 py-1 text-sm font-medium">
+                                        {{ pontosDaAtividade(atividade).toFixed(2) }} pts
                                     </span>
-                                    <Button type="button" variant="ghost" size="icon" @click="removeSelectedFile(atividade, fileIndex)">
-                                        <Trash2 />
+                                    <Button type="button" variant="ghost" size="icon" @click="removeAtividade(index)">
+                                        <Trash2 class="size-4" />
                                     </Button>
                                 </div>
                             </div>
-                        </div>
 
-                        <InputError :message="atividadeDocumentosError(index)" />
+                            <div class="grid gap-4">
+                                <div class="grid gap-2">
+                                    <Label :for="`criterio-${index}`">Critério</Label>
+                                    <select
+                                        :id="`criterio-${index}`"
+                                        v-model="atividade.criterio_rsc_id"
+                                        class="h-10 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                                        @change="atividade.variacao_pontuacao_id = ''"
+                                    >
+                                        <option value="">Selecione</option>
+                                        <optgroup v-for="requisito in requisitos" :key="requisito.id" :label="`${requisito.numero}. ${requisito.nome}`">
+                                            <option v-for="criterio in requisito.criterios" :key="criterio.id" :value="criterio.id">
+                                                {{ requisito.numero }}.{{ criterio.item }} · {{ criterio.descricao }}
+                                            </option>
+                                        </optgroup>
+                                    </select>
+                                    <InputError :message="atividadeError(index, 'criterio_rsc_id')" />
+                                </div>
+
+                                <div v-if="criterioById(atividade.criterio_rsc_id)?.variacoes_pontuacao.length" class="grid gap-2">
+                                    <Label :for="`variacao-${index}`">Variação</Label>
+                                    <select
+                                        :id="`variacao-${index}`"
+                                        v-model="atividade.variacao_pontuacao_id"
+                                        class="h-10 rounded-md border border-input bg-background px-3 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                                    >
+                                        <option value="">Selecione</option>
+                                        <option
+                                            v-for="variacao in criterioById(atividade.criterio_rsc_id)?.variacoes_pontuacao"
+                                            :key="variacao.id"
+                                            :value="variacao.id"
+                                        >
+                                            {{ variacao.nome }} · {{ variacao.pontos }} pontos
+                                        </option>
+                                    </select>
+                                    <InputError :message="atividadeError(index, 'variacao_pontuacao_id')" />
+                                </div>
+
+                                <div class="grid gap-2 sm:grid-cols-3">
+                                    <div class="grid gap-2">
+                                        <Label :for="`quantidade-${index}`">Quantidade</Label>
+                                        <Input :id="`quantidade-${index}`" v-model="atividade.quantidade" type="number" min="0.01" step="0.01" />
+                                        <InputError :message="atividadeError(index, 'quantidade')" />
+                                    </div>
+
+                                    <div class="grid gap-2 sm:col-span-2">
+                                        <Label :for="`titulo-${index}`">Título da atividade</Label>
+                                        <Input :id="`titulo-${index}`" v-model="atividade.titulo_atividade" />
+                                        <InputError :message="atividadeError(index, 'titulo_atividade')" />
+                                    </div>
+                                </div>
+
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label :for="`inicio-${index}`">Data inicial</Label>
+                                        <Input :id="`inicio-${index}`" v-model="atividade.data_inicio" type="date" />
+                                        <InputError :message="atividadeError(index, 'data_inicio')" />
+                                    </div>
+
+                                    <div class="grid gap-2">
+                                        <Label :for="`fim-${index}`">Data final</Label>
+                                        <Input :id="`fim-${index}`" v-model="atividade.data_fim" type="date" />
+                                        <InputError :message="atividadeError(index, 'data_fim')" />
+                                    </div>
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label :for="`descricao-${index}`">Descrição</Label>
+                                    <textarea
+                                        :id="`descricao-${index}`"
+                                        v-model="atividade.descricao_atividade"
+                                        rows="4"
+                                        class="rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                                    />
+                                    <InputError :message="atividadeError(index, 'descricao_atividade')" />
+                                </div>
+
+                                <div class="grid gap-2">
+                                    <Label :for="`relevancia-${index}`">Justificativa de relevância</Label>
+                                    <textarea
+                                        :id="`relevancia-${index}`"
+                                        v-model="atividade.justificativa_relevancia"
+                                        rows="4"
+                                        class="rounded-md border border-input bg-background px-3 py-2 text-sm shadow-xs outline-none focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px]"
+                                    />
+                                    <InputError :message="atividadeError(index, 'justificativa_relevancia')" />
+                                </div>
+
+                                <div class="grid gap-2 sm:grid-cols-2">
+                                    <div class="grid gap-2">
+                                        <Label :for="`tipo-documento-${index}`">Tipo de documento</Label>
+                                        <Input :id="`tipo-documento-${index}`" v-model="atividade.tipo_documento" />
+                                        <InputError :message="atividadeError(index, 'tipo_documento')" />
+                                    </div>
+
+                                    <div class="grid gap-2">
+                                        <Label :for="`observacao-documento-${index}`">Observação do documento</Label>
+                                        <Input :id="`observacao-documento-${index}`" v-model="atividade.observacao_documento" />
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="grid gap-3 rounded-md border bg-muted/30 p-3">
+                                <div class="flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+                                    <div>
+                                        <h4 class="flex items-center gap-2 text-sm font-medium">
+                                            <Paperclip class="size-4" />
+                                            Comprovante da atividade
+                                        </h4>
+                                        <p class="text-sm text-muted-foreground">
+                                            Arquivos PDF, JPG, PNG ou WEBP até 10 MB por arquivo.
+                                        </p>
+                                    </div>
+                                    <Label
+                                        :for="`documentos-${index}`"
+                                        class="inline-flex h-9 cursor-pointer items-center justify-center gap-2 rounded-md border border-input bg-background px-3 text-sm font-medium shadow-xs hover:bg-accent hover:text-accent-foreground"
+                                    >
+                                        <Upload class="size-4" />
+                                        Selecionar arquivos
+                                    </Label>
+                                    <Input
+                                        :id="`documentos-${index}`"
+                                        type="file"
+                                        multiple
+                                        accept=".pdf,.jpg,.jpeg,.png,.webp"
+                                        class="sr-only"
+                                        @change="setFiles($event, atividade)"
+                                    />
+                                </div>
+
+                                <div v-if="atividade.documentos_existentes.length" class="grid gap-2">
+                                    <p class="text-xs font-medium uppercase text-muted-foreground">Já anexados</p>
+                                    <div class="grid gap-2">
+                                        <div v-for="documento in atividade.documentos_existentes" :key="documento.id" class="flex items-center justify-between gap-3 rounded-md bg-background p-2 text-sm">
+                                            <span class="flex min-w-0 items-center gap-2">
+                                                <FileText class="size-4 shrink-0" />
+                                                <span class="truncate">{{ documento.nome_original }}</span>
+                                            </span>
+                                            <span class="shrink-0 text-xs text-muted-foreground">{{ formatBytes(documento.tamanho) }}</span>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div v-if="atividade.documentos.length" class="grid gap-2">
+                                    <p class="text-xs font-medium uppercase text-muted-foreground">Novos anexos</p>
+                                    <div class="grid gap-2">
+                                        <div v-for="(documento, fileIndex) in atividade.documentos" :key="`${documento.name}-${fileIndex}`" class="flex items-center justify-between gap-3 rounded-md bg-background p-2 text-sm">
+                                            <span class="flex min-w-0 items-center gap-2">
+                                                <FileText class="size-4 shrink-0" />
+                                                <span class="truncate">{{ documento.name }}</span>
+                                            </span>
+                                            <Button type="button" variant="ghost" size="icon" @click="removeSelectedFile(atividade, fileIndex)">
+                                                <Trash2 class="size-4" />
+                                            </Button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <InputError :message="atividadeDocumentosError(index)" />
+                            </div>
+
+                            <div class="grid gap-3 rounded-md border bg-background p-3 text-sm">
+                                <h4 class="text-sm font-medium">Declarações da atividade</h4>
+                                <label class="flex items-start gap-3">
+                                    <input
+                                        type="checkbox"
+                                        class="mt-0.5 size-4 rounded border-input"
+                                        :checked="declaracaoAtividadeMarcada(atividade, 'atividade_exercicio_cargo')"
+                                        @change="setDeclaracaoAtividade(atividade, 'atividade_exercicio_cargo', $event)"
+                                    />
+                                    <span>A atividade foi realizada no exercício do cargo.</span>
+                                </label>
+                                <label class="flex items-start gap-3">
+                                    <input
+                                        type="checkbox"
+                                        class="mt-0.5 size-4 rounded border-input"
+                                        :checked="declaracaoAtividadeMarcada(atividade, 'atividade_ordinaria_cargo')"
+                                        @change="setDeclaracaoAtividade(atividade, 'atividade_ordinaria_cargo', $event)"
+                                    />
+                                    <span>A atividade não é ordinária ou rotineira do cargo.</span>
+                                </label>
+                                <label class="flex items-start gap-3">
+                                    <input
+                                        type="checkbox"
+                                        class="mt-0.5 size-4 rounded border-input"
+                                        :checked="declaracaoAtividadeMarcada(atividade, 'usado_em_concessao_anterior')"
+                                        @change="setDeclaracaoAtividade(atividade, 'usado_em_concessao_anterior', $event)"
+                                    />
+                                    <span>A atividade não foi utilizada em concessão anterior.</span>
+                                </label>
+                            </div>
+
+                            <InputError :message="atividadeError(index, 'atividade_exercicio_cargo')" />
+                            <InputError :message="atividadeError(index, 'atividade_ordinaria_cargo')" />
+                            <InputError :message="atividadeError(index, 'usado_em_concessao_anterior')" />
+                        </article>
                     </div>
+                </section>
 
-                    <div class="grid gap-3 rounded-md border bg-muted/30 p-3 text-sm">
-                        <h4 class="text-sm font-medium">Declarações da atividade</h4>
-                        <label class="flex items-start gap-3">
-                            <input
-                                type="checkbox"
-                                class="mt-0.5 size-4 rounded border-input"
-                                :checked="declaracaoAtividadeMarcada(atividade, 'atividade_exercicio_cargo')"
-                                @change="setDeclaracaoAtividade(atividade, 'atividade_exercicio_cargo', $event)"
-                            />
-                            <span>A atividade foi realizada no exercício do cargo.</span>
-                        </label>
-                        <label class="flex items-start gap-3">
-                            <input
-                                type="checkbox"
-                                class="mt-0.5 size-4 rounded border-input"
-                                :checked="declaracaoAtividadeMarcada(atividade, 'atividade_ordinaria_cargo')"
-                                @change="setDeclaracaoAtividade(atividade, 'atividade_ordinaria_cargo', $event)"
-                            />
-                            <span>A atividade não é ordinária ou rotineira do cargo.</span>
-                        </label>
-                        <label class="flex items-start gap-3">
-                            <input
-                                type="checkbox"
-                                class="mt-0.5 size-4 rounded border-input"
-                                :checked="declaracaoAtividadeMarcada(atividade, 'usado_em_concessao_anterior')"
-                                @change="setDeclaracaoAtividade(atividade, 'usado_em_concessao_anterior', $event)"
-                            />
-                            <span>A atividade não foi utilizada em concessão anterior.</span>
-                        </label>
+                <section class="grid gap-3 rounded-lg border bg-background p-4 text-sm shadow-xs sm:p-5">
+                    <div class="flex items-center gap-2">
+                        <Target class="size-4 text-muted-foreground" />
+                        <h2 class="font-semibold">Declarações finais</h2>
                     </div>
-
-                    <InputError :message="atividadeError(index, 'atividade_exercicio_cargo')" />
-                    <InputError :message="atividadeError(index, 'atividade_ordinaria_cargo')" />
-                    <InputError :message="atividadeError(index, 'usado_em_concessao_anterior')" />
-                </article>
-
-                <div class="grid gap-3 rounded-lg border p-4 text-sm">
                     <label class="flex items-start gap-3">
                         <input v-model="form.declaracao_veracidade" type="checkbox" class="mt-0.5 size-4 rounded border-input" />
                         Declaro que as informações e documentos apresentados são verdadeiros.
@@ -904,9 +1021,8 @@ function submit(intent: 'draft' | 'submit') {
                     <InputError :message="form.errors.solicitacao" />
                     <InputError :message="form.errors.declaracao_veracidade" />
                     <InputError :message="form.errors.declaracao_nao_reutilizacao" />
-                </div>
-            </section>
-            </div>
+                </section>
+            </aside>
         </form>
     </main>
 </template>

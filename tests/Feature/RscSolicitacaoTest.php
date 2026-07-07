@@ -11,6 +11,7 @@ use App\Rsc\SolicitacaoRscStatus;
 use Database\Seeders\RscSeeder;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Storage;
+use Inertia\Testing\AssertableInertia as Assert;
 
 test('authenticated user can save servidor profile', function () {
     $this->seed(RscSeeder::class);
@@ -33,6 +34,25 @@ test('authenticated user can save servidor profile', function () {
         ->assertRedirect(route('rsc.solicitacoes.index'));
 
     expect($user->servidor()->exists())->toBeTrue();
+});
+
+test('create page displays every rsc requirement and criterion', function () {
+    $this->seed(RscSeeder::class);
+
+    $user = User::factory()->create();
+    servidorFor($user, 'Mestrado');
+
+    $this->actingAs($user)
+        ->get(route('rsc.solicitacoes.create'))
+        ->assertSuccessful()
+        ->assertInertia(fn (Assert $page) => $page
+            ->component('rsc/solicitacoes/Create')
+            ->has('requisitos', 6)
+            ->where('requisitos.0.numero', 1)
+            ->has('requisitos.0.criterios', 10)
+            ->where('requisitos.5.numero', 6)
+            ->has('requisitos.5.criterios', 19)
+        );
 });
 
 test('submission is blocked when automatic rules are not met', function () {
